@@ -3,5 +3,5 @@ numpy
 xgboost
 scikit-learn
 matplotlib
-streamlit
-altair==4.2.2
+streamlit==1.32.2
+altair==5.2.0
