@@ -5,3 +5,4 @@ scikit-learn
 matplotlib
 streamlit==1.32.2
 altair==5.2.0
+plotly
