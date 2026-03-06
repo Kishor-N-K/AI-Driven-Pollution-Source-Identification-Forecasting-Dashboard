@@ -1,0 +1,249 @@
+import streamlit as st
+import requests
+import pandas as pd
+import plotly.graph_objects as go
+
+# -------------------------------------------------
+# CONFIG
+# -------------------------------------------------
+st.set_page_config(page_title="Delhi AQI Dashboard", layout="wide")
+st.title("Delhi Air Quality Dashboard (Live)")
+
+TOKEN = "1b4a00d1444fe2a78fe2c181f4ff9cdac75e6aa9"  # 🔴 PUT YOUR TOKEN HERE
+
+# -------------------------------------------------
+# AQI CATEGORY (EPA SCALE)
+# -------------------------------------------------
+def get_aqi_category(aqi):
+    if aqi <= 50:
+        return "Good", "#00E400"
+    elif aqi <= 100:
+        return "Moderate", "#FFFF00"
+    elif aqi <= 150:
+        return "Unhealthy for Sensitive Groups", "#FF7E00"
+    elif aqi <= 200:
+        return "Unhealthy", "#FF0000"
+    elif aqi <= 300:
+        return "Very Unhealthy", "#8F3F97"
+    else:
+        return "Hazardous", "#7E0023"
+
+# -------------------------------------------------
+# FETCH DELHI STATIONS
+# -------------------------------------------------
+def fetch_delhi_stations():
+    url = f"https://api.waqi.info/map/bounds/?token={TOKEN}&latlng=28.40,76.80,28.90,77.50"
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data["status"] == "ok":
+            return data["data"]
+        else:
+            return None
+    except:
+        return None
+
+# -------------------------------------------------
+# LOAD DATA
+# -------------------------------------------------
+stations = fetch_delhi_stations()
+
+if not stations:
+    st.error("Unable to fetch Delhi AQI data.")
+    st.stop()
+
+df = pd.DataFrame(stations)
+
+df = df[df["aqi"] != "-"]
+df["aqi"] = pd.to_numeric(df["aqi"], errors="coerce")
+df = df.dropna(subset=["aqi"])
+
+if len(df) == 0:
+    st.error("No valid AQI data available.")
+    st.stop()
+
+# Extract station name
+df["station_name"] = df["station"].apply(
+    lambda x: x["name"] if isinstance(x, dict) else x
+)
+
+# Category + Color
+df["category"], df["color"] = zip(*df["aqi"].apply(get_aqi_category))
+
+# -------------------------------------------------
+# CALCULATIONS
+# -------------------------------------------------
+city_avg_aqi = round(df["aqi"].mean(), 2)
+worst_aqi = int(df["aqi"].max())
+
+worst_station_row = df.loc[df["aqi"].idxmax()]
+worst_station_name = worst_station_row["station_name"]
+
+avg_category, avg_color = get_aqi_category(city_avg_aqi)
+worst_category, worst_color = get_aqi_category(worst_aqi)
+
+# -------------------------------------------------
+# HERO SECTION
+# -------------------------------------------------
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown(
+        f"""
+        <div style="
+            background-color:{avg_color};
+            padding:40px;
+            border-radius:20px;
+            text-align:center;
+            color:black;">
+            <h1 style="font-size:70px;margin-bottom:0;">{city_avg_aqi}</h1>
+            <h3>Delhi City Average AQI</h3>
+            <p>{avg_category}</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with col2:
+    st.markdown(
+        f"""
+        <div style="
+            background-color:{worst_color};
+            padding:40px;
+            border-radius:20px;
+            text-align:center;
+            color:white;">
+            <h1 style="font-size:70px;margin-bottom:0;">{worst_aqi}</h1>
+            <h3>Worst Monitoring Station</h3>
+            <p>{worst_station_name}</p>
+            <p>{worst_category}</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# -------------------------------------------------
+# MAP + COLOR INDEX
+# -------------------------------------------------
+st.subheader("Delhi Monitoring Stations Map")
+
+col_map, col_legend = st.columns([4, 1])
+
+with col_map:
+    fig = go.Figure()
+
+    # Glow for Hazardous
+    hazard_df = df[df["category"] == "Hazardous"]
+
+    fig.add_trace(go.Scattermapbox(
+        lat=hazard_df["lat"],
+        lon=hazard_df["lon"],
+        mode='markers',
+        marker=dict(
+            size=45,
+            color='rgba(126,0,35,0.35)',
+        ),
+        hoverinfo='skip'
+    ))
+
+    # Main markers
+    fig.add_trace(go.Scattermapbox(
+        lat=df["lat"],
+        lon=df["lon"],
+        mode='markers',
+        marker=dict(
+            size=12,
+            color=df["color"],
+            showscale=False
+        ),
+        text=df["station_name"],
+        customdata=df[["aqi", "category", "color"]],
+        hovertemplate=
+            "<b>%{text}</b><br><br>" +
+            "AQI: <b>%{customdata[0]}</b><br>" +
+            "<span style='color:%{customdata[2]};'>" +
+            "%{customdata[1]}</span>" +
+            "<extra></extra>"
+    ))
+
+    fig.update_layout(
+        mapbox=dict(
+            style="carto-darkmatter",
+            zoom=10,
+            center=dict(lat=28.6139, lon=77.2090)
+        ),
+        margin={"r":0,"t":0,"l":0,"b":0},
+        height=600
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------------------------------
+# AQI COLOR INDEX PANEL
+# -------------------------------------------------
+import streamlit.components.v1 as components
+
+with col_legend:
+    st.markdown("### AQI Index")
+
+    legend_html = """
+    <div style="display:flex; align-items:center; height:400px; font-family:sans-serif; color: white;">
+
+        <!-- Gradient Bar -->
+        <div style="
+            width:35px;
+            height:350px;
+            background: linear-gradient(to top,
+                #00E400 0%,
+                #00E400 16%,
+                #FFFF00 16%,
+                #FFFF00 32%,
+                #FF7E00 32%,
+                #FF7E00 48%,
+                #FF0000 48%,
+                #FF0000 64%,
+                #8F3F97 64%,
+                #8F3F97 80%,
+                #7E0023 80%,
+                #7E0023 100%
+            );
+            border-radius:8px;
+            margin-right:15px;">
+        </div>
+
+        <!-- Labels -->
+        <div style="
+            display:flex;
+            flex-direction:column;
+            justify-content:space-between;
+            height:350px;
+            font-size:13px;">
+            <span>500</span>
+            <span>300</span>
+            <span>200</span>
+            <span>150</span>
+            <span>100</span>
+            <span>50</span>
+            <span>0</span>
+        </div>
+
+    </div>
+    """
+
+    components.html(legend_html, height=420)
+
+
+
+
+
+# -------------------------------------------------
+# STATION TABLE
+# -------------------------------------------------
+st.subheader("Station-wise AQI")
+st.dataframe(df[["station_name", "aqi", "category"]].sort_values("aqi", ascending=False))
+
+# -------------------------------------------------
+# FOOTER
+# -------------------------------------------------
+st.markdown("---")
+st.caption("Data Source: Government Monitoring Stations via WAQI API")
